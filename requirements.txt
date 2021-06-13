@@ -1,0 +1,6 @@
+# Upgrade pip
+# python -m pip install --upgrade pip
+
+# Packages
+pywinauto
+webbot
