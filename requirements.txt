@@ -3,4 +3,4 @@
 
 # Packages
 pywinauto
-webbot
+selenium # instead of webbot
