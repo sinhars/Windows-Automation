@@ -4,3 +4,5 @@
 # Packages
 pywinauto
 selenium # instead of webbot
+yagmail
+keyring

@@ -148,3 +148,10 @@ dmypy.json
 .winauto/Scripts/wmitest.py
 .winauto/Scripts/wmiweb.py
 credentials.json
+.winauto/Scripts/csscapture.exe
+.winauto/Scripts/csscombine.exe
+.winauto/Scripts/cssparse.exe
+.winauto/Scripts/keyring.exe
+.winauto/Scripts/normalizer.exe
+.winauto/Scripts/yagmail.exe
+pywhatkit_dbs.txt
