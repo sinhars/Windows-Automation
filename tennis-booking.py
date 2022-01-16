@@ -27,7 +27,9 @@ def bookTennisSlots(date_delta=1, slot_hour=None, court_num=None):
     try:
         booking_stage = "Waiting for facilities list"
         facilities_table = WebDriverWait(driver, delay).until(EC.presence_of_element_located((By.ID, "facilities")))
-        for row in facilities_table.find_elements_by_xpath(".//tbody//tr"):
+        all_facility_rows = facilities_table.find_elements_by_xpath(".//tbody//tr")
+        all_facility_rows.reverse()
+        for row in all_facility_rows:    
             all_cells = row.find_elements_by_xpath(".//td")
             booking_stage = "Searching for valid court"
             if is_valid_court(all_cells, court_num):
@@ -157,14 +159,14 @@ def main():
     if result:
         success_msg = "Booking successfully completed for %s at %s" %(get_booking_date(date_delta=date_delta), get_booking_time_slot(slot_hour=slot_hour))
         logging.info(success_msg)
-        send_status_email(msg_text=success_msg)
-        send_status_whatsapp(msg_text=success_msg)
+        # send_status_email(msg_text=success_msg)
+        # send_status_whatsapp(msg_text=success_msg)
     else:
         # Send failure email 
         failure_msg = "Booking unsuccessful for %s at %s" %(get_booking_date(date_delta=date_delta), get_booking_time_slot(slot_hour=slot_hour))
         logging.warn(failure_msg)
-        send_status_email(msg_text=failure_msg)
-        send_status_whatsapp(msg_text=failure_msg)
+        # send_status_email(msg_text=failure_msg)
+        # send_status_whatsapp(msg_text=failure_msg)
 
 if __name__ == "__main__":
     main()
