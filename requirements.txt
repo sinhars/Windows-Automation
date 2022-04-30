@@ -2,7 +2,10 @@
 # python -m pip install --upgrade pip
 
 # Packages
+black
+flask
+pywhatkit
 pywinauto
-selenium # instead of webbot
+selenium
 yagmail
 keyring

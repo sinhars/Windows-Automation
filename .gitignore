@@ -127,31 +127,7 @@ dmypy.json
 
 # Pyre type checker
 .pyre/
-.winauto/pyvenv.cfg
-.winauto/readme.rst
-.winauto/Scripts/activate
-.winauto/Scripts/activate.bat
-.winauto/Scripts/Activate.ps1
-.winauto/Scripts/clear_comtypes_cache.py
-.winauto/Scripts/deactivate.bat
-.winauto/Scripts/easy_install-3.9.exe
-.winauto/Scripts/easy_install.exe
-.winauto/Scripts/pip.exe
-.winauto/Scripts/pip3.9.exe
-.winauto/Scripts/pip3.exe
-.winauto/Scripts/python.exe
-.winauto/Scripts/pythonw.exe
-.winauto/Scripts/pywin32_postinstall.py
-.winauto/Scripts/pywin32_testall.py
-.winauto/Scripts/wmitest.cmd
-.winauto/Scripts/wmitest.master.ini
-.winauto/Scripts/wmitest.py
-.winauto/Scripts/wmiweb.py
+.winauto
 credentials.json
-.winauto/Scripts/csscapture.exe
-.winauto/Scripts/csscombine.exe
-.winauto/Scripts/cssparse.exe
-.winauto/Scripts/keyring.exe
-.winauto/Scripts/normalizer.exe
-.winauto/Scripts/yagmail.exe
 pywhatkit_dbs.txt
+pywhatkit_db.txt
