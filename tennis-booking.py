@@ -6,6 +6,8 @@ import logging
 import yagmail
 import pywhatkit
 
+from joblib import Parallel, delayed
+
 from selenium import webdriver
 from selenium.webdriver.support.ui import WebDriverWait
 from selenium.webdriver.common.by import By
@@ -18,7 +20,8 @@ def read_credentials(key, file_name="credentials.json"):
     creds = json.load(open(file_name))
     return creds[key]
 
-def get_apnacomplex_driver(creds, delay):
+
+def get_apnacomplex_driver(delay):
     options = Options()
     options.binary_location = "C:/Program Files/Google/Chrome/Application/chrome.exe"
     options.add_experimental_option("excludeSwitches", ["enable-logging"])
@@ -32,6 +35,7 @@ def get_apnacomplex_driver(creds, delay):
         # send_status_whatsapp(msg_text=failure_msg)
         quit()
 
+    creds = read_credentials(key="apna-complex")
     # Navigate to facilities page url
     driver.get(creds["url"])
     # Enter email
@@ -82,11 +86,19 @@ def get_court_links(driver, delay, court_num):
 
     return court_links
 
-def get_existing_bookings(driver, delay, viewing_links, booking_date):
+
+def get_existing_bookings(delay, booking_date):
+    # Initialize the webdriver and navigate to facilities page
+    driver = get_apnacomplex_driver(delay=delay)
+
+    # Get the court booking and viewing links from the facilities table
+    court_links = get_court_links(driver=driver, delay=delay, court_num=None)
+
+    viewing_links = court_links["viewing"]
     existing_bookings = dict(Court1=None, Court2=None)
     try:
         for court in viewing_links:
-            existing_bookings[court] = active_bookings(
+            existing_bookings[court] = get_active_bookings(
                 driver=driver,
                 delay=delay,
                 viewing_url=viewing_links[court],
@@ -96,9 +108,10 @@ def get_existing_bookings(driver, delay, viewing_links, booking_date):
         logging.error(f"Booking failed while checking exising bookings.")
         logging.error(ex)
 
-    return existing_bookings
+    return existing_bookings, court_links
 
-def active_bookings(driver, delay, viewing_url, booking_date):
+
+def get_active_bookings(driver, delay, viewing_url, booking_date):
     def get_booking_count(booking_calendar, check_expired):
         booking_count = 0
         events_container = booking_calendar.find_elements_by_class_name(
@@ -140,9 +153,32 @@ def active_bookings(driver, delay, viewing_url, booking_date):
 
     return booking_count
 
-def make_booking(driver, delay, booking_url, booking_date, date_string, slot_string):
+
+def initialize_booking(
+    court_num, court_links, booking_date, date_string, slot_string, delay
+):
+    if court_num is None:
+        logging.error("Valid court not found for booking.")
+        return False
+
+    logging_data = f"{date_string} at {slot_string} on Court {court_num}."
+    logging.info(f"Initiating booking: {logging_data}")
+    # Initialize a new driver for booking as we will use parallel processes to
+    # book simultaneously if more than one slot has to be booked
+    result = make_booking(
+        delay=delay,
+        booking_url=court_links["booking"][f"Court{court_num}"],
+        booking_date=booking_date,
+        date_string=date_string,
+        slot_string=slot_string,
+    )
+    return result, logging_data
+
+
+def make_booking(delay, booking_url, booking_date, date_string, slot_string):
     slot_booked = False
     try:
+        driver = get_apnacomplex_driver(delay=delay)
         driver.get(booking_url)
         # Check instructions checkbox
         instructions_checkbox = WebDriverWait(driver, delay).until(
@@ -162,11 +198,11 @@ def make_booking(driver, delay, booking_url, booking_date, date_string, slot_str
         if time_to_booking > datetime.timedelta(hours=25):
             logging.error("Booking time is more than 1 day in the future. ")
             return slot_booked
-                
+
         while time_to_booking >= datetime.timedelta(hours=24):
-            time.sleep(5)
+            time.sleep(1)
             time_to_booking = booking_date - datetime.datetime.now()
-        
+
         # Submit form
         submit_button = driver.find_element(by=By.NAME, value="make_booking")
         submit_button.submit()
@@ -202,6 +238,7 @@ def get_booking_time_slot(slot_hour):
     slot_string = "{}:00 - {}:45".format(slot_string, slot_string)
     return slot_hour, slot_string
 
+
 def get_booking_date(slot_hour):
     booking_date = datetime.datetime.now() + datetime.timedelta(days=1)
     booking_date = booking_date.replace(
@@ -210,14 +247,29 @@ def get_booking_date(slot_hour):
     date_string = booking_date.strftime("%d/%m/%Y")
     return booking_date, date_string
 
-def get_court_num(existing_bookings):
-    if existing_bookings["Court1"] < 2:
-        court_num = 1
-    elif existing_bookings["Court2"] < 2:
-        court_num = 2
-    else:
-        court_num = None
-    return court_num
+
+def select_court_num(existing_bookings, retries, num_slots):
+    max_bookable_slots = 4
+    already_used_slots = existing_bookings["Court1"] + existing_bookings["Court2"]
+    avaiable_slots = max_bookable_slots - already_used_slots
+    if avaiable_slots <= 0:
+        return None
+
+    num_slots = min(num_slots, avaiable_slots)
+    court_num_list = [None] * num_slots
+
+    new_bookings = existing_bookings.copy()
+    courtPreference = ["Court1", "Court2"] if (retries < 2) else ["Court2", "Court1"]
+    for i in range(num_slots):
+        if new_bookings[courtPreference[0]] < 2:
+            court_num_list[i] = int(courtPreference[0][-1])
+            new_bookings[courtPreference[0]] += 1
+        elif new_bookings[courtPreference[1]] < 2:
+            court_num_list[i] = int(courtPreference[1][-1])
+            new_bookings[courtPreference[1]] += 1
+
+    return court_num_list
+
 
 def is_valid_court(all_cells, court_num):
     facility_name = all_cells[0].text
@@ -233,6 +285,7 @@ def send_status_email(msg_text):
     gmail_creds = read_credentials(key="gmail")
     yag = yagmail.SMTP(user=gmail_creds["id"], password=gmail_creds["password"])
     yag.send(gmail_creds["id"], msg_text, msg_text)
+
 
 def send_status_whatsapp(msg_text):
     try:
@@ -253,68 +306,58 @@ def send_status_whatsapp(msg_text):
 
 
 def main():
+
     logging.basicConfig(filename="tennis-booking.log", level=logging.INFO)
-    
+
     DEFAULT_DELAY = 30
     NUM_SLOTS = 2
     MAX_RETRIES = 2
     SLOT_HOUR = None
-    
+
     try:
         slot_hour, slot_string = get_booking_time_slot(slot_hour=SLOT_HOUR)
         booking_date, date_string = get_booking_date(slot_hour=slot_hour)
     except:
         logging.error("Invalid arguments provided!")
 
-    # Initialize the webdriver and navigate to facilities page
-    apna_complex_creds = read_credentials(key="apna-complex")
-    driver = get_apnacomplex_driver(creds=apna_complex_creds, delay=DEFAULT_DELAY)
-
-    # Get the court booking and viewing links from the facilities table
-    court_links = get_court_links(driver=driver, delay=DEFAULT_DELAY, court_num=None)
-
     logging.info(f"Checking existing bookings.")
-    
+
     # Get today's active booking counts for each court
-    existing_bookings = get_existing_bookings(
-        driver=driver,
+    existing_bookings, court_links = get_existing_bookings(
         delay=DEFAULT_DELAY,
-        viewing_links=court_links["viewing"],
         booking_date=booking_date,
     )
-    
+
     retries = 0
     successfully_booked = 0
     while (successfully_booked < NUM_SLOTS) and (retries < MAX_RETRIES):
         retries += 1
-        for i in range(NUM_SLOTS):
-            logging.info(f"Booking slot {i + 1} of total {NUM_SLOTS} slots.")
-            # Choose the appropriate court for booking
-            court_num = get_court_num(existing_bookings=existing_bookings)
-            if court_num is None:
-                logging.error(
-                    "You already have 4 active bookings. Can't book any more."
-                )
-                break
-            # If Court1 failed first time and Court2 is available, try that instead
-            if (retries > 1) and (court_num == 1) and existing_bookings["Court2"] < 2:
-                court_num = 2
-            
-            logging_data = f"{date_string} at {slot_string} on Court {court_num}."
-            logging.info(f"Initiating booking: {logging_data}")
-            
-            result = make_booking(
-                driver=driver,
-                delay=DEFAULT_DELAY,
-                booking_url=court_links["booking"][f"Court{court_num}"],
+        court_num_list = select_court_num(
+            existing_bookings=existing_bookings, retries=retries, num_slots=NUM_SLOTS
+        )
+        if court_num_list is None:
+            logging.error("Too many active bookings found. Can't book any more.")
+
+        booking_args = [
+            dict(
+                court_num=court_num,
+                court_links=court_links,
                 booking_date=booking_date,
                 date_string=date_string,
                 slot_string=slot_string,
+                delay=DEFAULT_DELAY,
             )
+            for court_num in court_num_list
+        ]
 
-            if result:
+        results = Parallel(n_jobs=-1)(
+            delayed(initialize_booking)(**kwargs) for kwargs in booking_args
+        )
+        for i, result in enumerate(results):
+            success, logging_data = result
+            if success:
                 successfully_booked += 1
-                existing_bookings[f"Court{court_num}"] += 1
+                existing_bookings[f"Court{court_num_list[i]}"] += 1
                 success_msg = f"Booking for slot {i + 1} successful: {logging_data}"
                 logging.info(success_msg)
                 # send_status_whatsapp(msg_text=success_msg)
@@ -322,6 +365,8 @@ def main():
                 failure_msg = f"Booking failed for slot {i + 1}: {logging_data}"
                 logging.error(failure_msg)
                 # send_status_whatsapp(msg_text=failure_msg)
+
+    return
 
 
 if __name__ == "__main__":

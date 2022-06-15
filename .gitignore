@@ -128,6 +128,7 @@ dmypy.json
 # Pyre type checker
 .pyre/
 .winauto
+.vscode
 credentials.json
 pywhatkit_dbs.txt
 pywhatkit_db.txt

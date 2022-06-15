@@ -4,6 +4,7 @@
 # Packages
 black
 flask
+joblib
 pywhatkit
 pywinauto
 selenium
