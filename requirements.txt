@@ -3,10 +3,9 @@
 
 # Packages
 black
-flask
 joblib
+PyAutoGUI
 pywhatkit
-pywinauto
 selenium
 yagmail
-keyring
+

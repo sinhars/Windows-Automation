@@ -1,10 +1,22 @@
+import os
 import sys
+import pathlib
 import json
 import time
 import datetime
 import logging
 import yagmail
 import pywhatkit
+import subprocess
+from win32gui import (
+    FindWindow,
+    GetWindowRect,
+    SetForegroundWindow,
+    IsWindowVisible,
+    EnumWindows,
+    GetWindowText,
+)
+import pyautogui
 
 from joblib import Parallel, delayed
 
@@ -21,13 +33,13 @@ def read_credentials(key, file_name="credentials.json"):
     return creds[key]
 
 
-def get_apnacomplex_driver(delay):
+def get_apnacomplex_driver(config):
     options = Options()
-    options.binary_location = "C:/Program Files/Google/Chrome/Application/chrome.exe"
+    options.binary_location = config["chromeBinaryPath"]
     options.add_experimental_option("excludeSwitches", ["enable-logging"])
     try:
         driver = webdriver.Chrome(
-            options=options, executable_path="chrome-driver/chromedriver.exe"
+            options=options, executable_path=config["chromeDriverExe"]
         )
     except SessionNotCreatedException:
         failure_msg = "Chrome driver is outdated. Please download the latest version from https://chromedriver.chromium.org/downloads"
@@ -47,7 +59,7 @@ def get_apnacomplex_driver(delay):
     # Submit login form
     pwd_box.submit()
     # Wait for page to load
-    WebDriverWait(driver, delay).until(
+    WebDriverWait(driver, config["webDriverDelay"]).until(
         EC.presence_of_element_located((By.ID, "facilities"))
     )
     return driver
@@ -87,31 +99,32 @@ def get_court_links(driver, delay, court_num):
     return court_links
 
 
-def get_existing_bookings(delay, booking_date):
+def get_existing_bookings(config):
     # Initialize the webdriver and navigate to facilities page
-    driver = get_apnacomplex_driver(delay=delay)
-
+    driver = get_apnacomplex_driver(config=config)
     # Get the court booking and viewing links from the facilities table
-    court_links = get_court_links(driver=driver, delay=delay, court_num=None)
-
+    court_links = get_court_links(
+        driver=driver, delay=config["webDriverDelay"], court_num=None
+    )
     viewing_links = court_links["viewing"]
     existing_bookings = dict(Court1=None, Court2=None)
     try:
         for court in viewing_links:
             existing_bookings[court] = get_active_bookings(
                 driver=driver,
-                delay=delay,
+                delay=config["webDriverDelay"],
                 viewing_url=viewing_links[court],
-                booking_date=booking_date,
             )
     except Exception as ex:
         logging.error(f"Booking failed while checking exising bookings.")
         logging.error(ex)
 
+    driver.close()
+    driver.quit()
     return existing_bookings, court_links
 
 
-def get_active_bookings(driver, delay, viewing_url, booking_date):
+def get_active_bookings(driver, delay, viewing_url):
     def get_booking_count(booking_calendar, check_expired):
         booking_count = 0
         events_container = booking_calendar.find_elements_by_class_name(
@@ -154,98 +167,18 @@ def get_active_bookings(driver, delay, viewing_url, booking_date):
     return booking_count
 
 
-def initialize_booking(
-    court_num, court_links, booking_date, date_string, slot_string, delay
-):
-    if court_num is None:
-        logging.error("Valid court not found for booking.")
-        return False
-
-    logging_data = f"{date_string} at {slot_string} on Court {court_num}."
-    logging.info(f"Initiating booking: {logging_data}")
-    # Initialize a new driver for booking as we will use parallel processes to
-    # book simultaneously if more than one slot has to be booked
-    result = make_booking(
-        delay=delay,
-        booking_url=court_links["booking"][f"Court{court_num}"],
-        booking_date=booking_date,
-        date_string=date_string,
-        slot_string=slot_string,
-    )
-    return result, logging_data
-
-
-def make_booking(delay, booking_url, booking_date, date_string, slot_string):
-    slot_booked = False
-    try:
-        driver = get_apnacomplex_driver(delay=delay)
-        driver.get(booking_url)
-        # Check instructions checkbox
-        instructions_checkbox = WebDriverWait(driver, delay).until(
-            EC.element_to_be_clickable((By.ID, "read_instructions"))
-        )
-        instructions_checkbox.click()
-        # Set booking date (today + 1)
-        date_selector = driver.find_element(by=By.NAME, value="booking_date")
-        date_selector.send_keys(date_string)
-        # Set time slot
-        slot_selector = driver.find_element_by_xpath(
-            f"//select[@name='facility_time_slot_id']/option[text()='{slot_string}']"
-        )
-        slot_selector.click()
-        # Wait for correct booking time
-        time_to_booking = booking_date - datetime.datetime.now()
-        if time_to_booking > datetime.timedelta(hours=25):
-            logging.error("Booking time is more than 1 day in the future. ")
-            return slot_booked
-
-        while time_to_booking >= datetime.timedelta(hours=24):
-            time.sleep(1)
-            time_to_booking = booking_date - datetime.datetime.now()
-
-        # Submit form
-        submit_button = driver.find_element(by=By.NAME, value="make_booking")
-        submit_button.submit()
-        # Confirm submission
-        confirm_button = WebDriverWait(driver, delay).until(
-            EC.element_to_be_clickable((By.ID, "confirm"))
-        )
-        confirm_button.click()
-        # Verify confirmation message
-        status_message = WebDriverWait(driver, delay).until(
-            EC.presence_of_element_located((By.ID, "status_message"))
-        )
-        slot_booked = status_message.text == "Booking completed successfully."
-
-    except TimeoutException:
-        logging.error("Booking page did not load correctly.")
-        slot_booked = False
-    except Exception as ex:
-        logging.error("Unknown error occured during booking.")
-        logging.error(ex)
-        slot_booked = False
-
-    return slot_booked
-
-
 def get_booking_time_slot(slot_hour):
     if slot_hour is None:
         slot_hour = int(datetime.datetime.now().strftime("%H"))
         current_min = int(datetime.datetime.now().strftime("%M"))
         if current_min > 50:
             slot_hour += 1
-    slot_string = str.zfill(str(slot_hour), 2)
-    slot_string = "{}:00 - {}:45".format(slot_string, slot_string)
-    return slot_hour, slot_string
 
-
-def get_booking_date(slot_hour):
-    booking_date = datetime.datetime.now() + datetime.timedelta(days=1)
-    booking_date = booking_date.replace(
-        hour=slot_hour, minute=0, second=1, microsecond=0
+    booking_datetime = datetime.datetime.now() + datetime.timedelta(days=1)
+    booking_datetime = booking_datetime.replace(
+        hour=slot_hour, minute=0, second=0, microsecond=1
     )
-    date_string = booking_date.strftime("%d/%m/%Y")
-    return booking_date, date_string
+    return slot_hour, booking_datetime
 
 
 def select_court_num(existing_bookings, retries, num_slots):
@@ -305,67 +238,258 @@ def send_status_whatsapp(msg_text):
         logging.error("Error sending whatsapp msg to %s" % whatsapp_creds["mobile"])
 
 
-def main():
+def load_apnacomplex_app(config, app_index):
+    app_config = config["apnaComplexApps"][app_index]
+    subprocess.Popen(app_config["launchPath"])
+    time.sleep(config["sleepDuration"]["appLoad"])
+    window_handle = FindWindow(None, app_config["windowName"])
+    return window_handle
 
+
+def navigate_to_booking(config, window_handle, booking_args):
+    if not IsWindowVisible(window_handle):
+        logging.error(f"Window handle {window_handle} not found - unable to navigate")
+        return False
+
+    SetForegroundWindow(window_handle)
+    window_rectangle = GetWindowRect(window_handle)
+
+    logging.info("Starting navigation to booking page")
+
+    # Open facilities page
+    pyautogui.moveTo(
+        window_rectangle[0] + config["mousePosition"]["facilitiesButton"]["x"],
+        window_rectangle[1] + config["mousePosition"]["facilitiesButton"]["y"],
+    )
+    pyautogui.click()
+    time.sleep(config["sleepDuration"]["pageLoad"])
+
+    # Click on page header before scrolling
+    pyautogui.moveTo(
+        window_rectangle[0] + config["mousePosition"]["facilitiesHeader"]["x"],
+        window_rectangle[1] + config["mousePosition"]["facilitiesHeader"]["y"],
+    )
+    pyautogui.click()
+
+    # Scroll to the bottom of the facilities page
+    counter = 0
+    while counter < config["scrollCount"]:
+        counter += 1
+        pyautogui.scroll(-config["scrollLength"])
+        time.sleep(config["sleepDuration"]["smallPause"])
+
+    # Click the tennis court facility icon
+    court_num = booking_args["courtNum"]
+    pyautogui.moveTo(
+        window_rectangle[0]
+        + config["mousePosition"][f"tennisCourt{court_num}Button"]["x"],
+        window_rectangle[1]
+        + config["mousePosition"][f"tennisCourt{court_num}Button"]["y"],
+    )
+    pyautogui.click()
+    time.sleep(config["sleepDuration"]["pageLoad"])
+
+    # Click slot booking button
+    pyautogui.moveTo(
+        window_rectangle[0] + config["mousePosition"]["slotBookingButton"]["x"],
+        window_rectangle[1] + config["mousePosition"]["slotBookingButton"]["y"],
+    )
+    pyautogui.click()
+    time.sleep(config["sleepDuration"]["pageLoad"])
+
+    # Click tomorrow toggle
+    pyautogui.moveTo(
+        window_rectangle[0] + config["mousePosition"]["tomorrowToggle"]["x"],
+        window_rectangle[1] + config["mousePosition"]["tomorrowToggle"]["y"],
+    )
+    pyautogui.click()
+    time.sleep(config["sleepDuration"]["smallPause"])
+    time.sleep(config["sleepDuration"]["smallPause"])
+
+    # Drag  slots to bring the correct slot to starting position
+    drag_counter = 0
+    total_drags = booking_args["slotHour"] - config["initialSlotHour"]
+    while drag_counter < total_drags:
+        drag_counter += 1
+        pyautogui.moveTo(
+            window_rectangle[0] + config["mousePosition"]["timeSlotDrag"]["x"],
+            window_rectangle[1] + config["mousePosition"]["timeSlotDrag"]["y"],
+        )
+        pyautogui.click()
+        pyautogui.drag(
+            -config["slotDragLength"],
+            0,
+            config["sleepDuration"]["smallPause"],
+            button="left",
+        )
+
+    # Click the slot at the starting position
+    pyautogui.moveTo(
+        window_rectangle[0] + config["mousePosition"]["timeSlotButton"]["x"],
+        window_rectangle[1] + config["mousePosition"]["timeSlotButton"]["y"],
+    )
+    pyautogui.click()
+
+    # Click on book now button
+    pyautogui.moveTo(
+        window_rectangle[0] + config["mousePosition"]["bookNowButton"]["x"],
+        window_rectangle[1] + config["mousePosition"]["bookNowButton"]["y"],
+    )
+    pyautogui.click()
+    time.sleep(config["sleepDuration"]["smallPause"])
+    return True
+
+
+def confirm_booking(config, window_handle):
+    if not IsWindowVisible(window_handle):
+        logging.error(
+            f"Window handle {window_handle} not found - unable to confirm booking"
+        )
+        return False
+
+    SetForegroundWindow(window_handle)
+    window_rectangle = GetWindowRect(window_handle)
+    pyautogui.moveTo(
+        window_rectangle[0] + config["mousePosition"]["confirmButton"]["x"],
+        window_rectangle[1] + config["mousePosition"]["confirmButton"]["y"],
+    )
+    pyautogui.click()
+    time.sleep(config["sleepDuration"]["smallPause"])
+    return True
+
+
+def navigate_to_home(config, window_handle):
+    if not IsWindowVisible(window_handle):
+        logging.error(f"Window handle {window_handle} not found - unable to close")
+        return False
+
+    SetForegroundWindow(window_handle)
+    window_rectangle = GetWindowRect(window_handle)
+
+    # Navigate back from booking page
+    pyautogui.moveTo(
+        window_rectangle[0] + config["mousePosition"]["bookingBackButton"]["x"],
+        window_rectangle[1] + config["mousePosition"]["bookingBackButton"]["y"],
+    )
+    pyautogui.click()
+    time.sleep(config["sleepDuration"]["pageLoad"])
+
+    # Navigate back from facilities page
+    pyautogui.moveTo(
+        window_rectangle[0] + config["mousePosition"]["facilitiesBackButton"]["x"],
+        window_rectangle[1] + config["mousePosition"]["facilitiesBackButton"]["y"],
+    )
+    pyautogui.click()
+    time.sleep(config["sleepDuration"]["pageLoad"])
+
+    # Click close window
+    pyautogui.moveTo(
+        window_rectangle[0] + config["mousePosition"]["closeWindowButton"]["x"],
+        window_rectangle[1] + config["mousePosition"]["closeWindowButton"]["y"],
+    )
+    pyautogui.click()
+    time.sleep(config["sleepDuration"]["smallPause"])
+
+    # Click confirm close window
+    pyautogui.moveTo(
+        window_rectangle[0] + config["mousePosition"]["confirmCloseButton"]["x"],
+        window_rectangle[1] + config["mousePosition"]["confirmCloseButton"]["y"],
+    )
+    pyautogui.click()
+    time.sleep(config["sleepDuration"]["smallPause"])
+    return True
+
+
+def closeBlueStacksWindow(config):
+    window_handle = FindWindow(None, config["blueStacksWindowName"])
+    if not IsWindowVisible(window_handle):
+        logging.error(f"BlueStacks window {window_handle} not found - unable to close")
+        return False
+
+    SetForegroundWindow(window_handle)
+    window_rectangle = GetWindowRect(window_handle)
+    time.sleep(config["sleepDuration"]["smallPause"])
+    pyautogui.moveTo(
+        window_rectangle[0] + config["mousePosition"]["blueStacksCloseButton"]["x"],
+        window_rectangle[1] + config["mousePosition"]["blueStacksCloseButton"]["y"],
+    )
+    pyautogui.click()
+    time.sleep(config["sleepDuration"]["smallPause"])
+    return True
+
+
+def minimizeAllWindows():
+    pyautogui.keyDown("winleft")
+    pyautogui.press("d")
+    pyautogui.keyUp("winleft")
+    screen_size = pyautogui.size()
+    pyautogui.moveTo(int(screen_size[0] / 2), int(screen_size[1] / 2))
+    pyautogui.click()
+    return
+
+
+def main():
+    # Minimize all windows and click on desktop
+    minimizeAllWindows()
+    
+    # Load config
+    configFilePath = os.path.join(pathlib.Path(__file__).parent, "config.json")
+    with open(configFilePath) as configJson:
+        config = json.load(configJson)
+
+    # Set logging config
     logging.basicConfig(filename="tennis-booking.log", level=logging.INFO)
 
-    DEFAULT_DELAY = 30
-    NUM_SLOTS = 2
-    MAX_RETRIES = 2
-    SLOT_HOUR = None
-
-    try:
-        slot_hour, slot_string = get_booking_time_slot(slot_hour=SLOT_HOUR)
-        booking_date, date_string = get_booking_date(slot_hour=slot_hour)
-    except:
-        logging.error("Invalid arguments provided!")
-
+    # Get existing booking counts for each court
     logging.info(f"Checking existing bookings.")
+    slot_hour, booking_datetime = get_booking_time_slot(slot_hour=config["slotHour"])
+    existing_bookings, court_links = get_existing_bookings(config=config)
 
-    # Get today's active booking counts for each court
-    existing_bookings, court_links = get_existing_bookings(
-        delay=DEFAULT_DELAY,
-        booking_date=booking_date,
+    # Get list of available courts
+    court_num_list = select_court_num(
+        existing_bookings=existing_bookings, retries=0, num_slots=config["numSlots"]
     )
+    if court_num_list is None:
+        logging.error("Too many active bookings found. Can't book any more.")
 
-    retries = 0
-    successfully_booked = 0
-    while (successfully_booked < NUM_SLOTS) and (retries < MAX_RETRIES):
-        retries += 1
-        court_num_list = select_court_num(
-            existing_bookings=existing_bookings, retries=retries, num_slots=NUM_SLOTS
+    # Create booking arguments for each court booking
+    all_booking_args = [
+        dict(courtNum=court_num, slotHour=slot_hour) for court_num in court_num_list
+    ]
+
+    # Open app windows for each booking and navigate to confirm page
+    logging.info("Initializing ApnaComplex app windows for booking.")
+    all_window_handles = list()
+    for idx, booking_args in enumerate(all_booking_args):
+        window_handle = load_apnacomplex_app(config=config, app_index=idx)
+        isSuccess = navigate_to_booking(
+            config=config, window_handle=window_handle, booking_args=booking_args
         )
-        if court_num_list is None:
-            logging.error("Too many active bookings found. Can't book any more.")
+        if isSuccess:
+            all_window_handles.append(window_handle)
 
-        booking_args = [
-            dict(
-                court_num=court_num,
-                court_links=court_links,
-                booking_date=booking_date,
-                date_string=date_string,
-                slot_string=slot_string,
-                delay=DEFAULT_DELAY,
-            )
-            for court_num in court_num_list
-        ]
+    # Sleep till booking time arrives
+    logging.info("Sleeping till booking time arrives.")
+    time_to_booking = booking_datetime - datetime.datetime.now()
+    sleep_time = 5
+    while time_to_booking >= datetime.timedelta(hours=24):
+        time.sleep(sleep_time)
+        time_to_booking = booking_datetime - datetime.datetime.now()
+        if time_to_booking < datetime.timedelta(hours=24, minutes=0, seconds=10):
+            sleep_time = 0.001
 
-        results = Parallel(n_jobs=-1)(
-            delayed(initialize_booking)(**kwargs) for kwargs in booking_args
-        )
-        for i, result in enumerate(results):
-            success, logging_data = result
-            if success:
-                successfully_booked += 1
-                existing_bookings[f"Court{court_num_list[i]}"] += 1
-                success_msg = f"Booking for slot {i + 1} successful: {logging_data}"
-                logging.info(success_msg)
-                # send_status_whatsapp(msg_text=success_msg)
-            else:
-                failure_msg = f"Booking failed for slot {i + 1}: {logging_data}"
-                logging.error(failure_msg)
-                # send_status_whatsapp(msg_text=failure_msg)
+    # Click confirm once booking time arrives
+    logging.info("Confirming bookings.")
+    for window_handle in all_window_handles:
+        confirm_booking(config=config, window_handle=window_handle)
+    time.sleep(config["sleepDuration"]["pageLoad"])
 
+    # Navigate back to the home page and close the windows
+    logging.info("Closing booking app windows.")
+    for window_handle in all_window_handles:
+        navigate_to_home(config=config, window_handle=window_handle)
+
+    closeBlueStacksWindow(config=config)
     return
 
 

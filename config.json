@@ -1,0 +1,89 @@
+{
+    "chromeBinaryPath": "C:/Program Files/Google/Chrome/Application/chrome.exe",
+    "chromeDriverExe": "chrome-driver/chromedriver.exe",
+    "blueStacksWindowName": "BlueStacks X",
+    "apnaComplexApps": [
+        {
+            "launchPath": "\"C:\\Program Files\\BlueStacks_nxt\\HD-Player.exe\" --instance Nougat32 --hidden --cmd launchAppWithBsx --package \"com.apnacomplex\"",
+            "windowName": "ApnaComplex1"
+        },
+        {
+            "launchPath": "\"C:\\Program Files\\BlueStacks_nxt\\HD-Player.exe\" --instance Nougat32_1 --hidden --cmd launchAppWithBsx --package \"com.apnacomplex\"",
+            "windowName": "ApnaComplex2"
+        }
+    ],
+    "webDriverDelay": 30,
+    "numSlots": 2,
+    "slotHour": null,
+    "initialSlotHour": 5,
+    "sleepDuration": {
+        "appLoad": 120,
+        "pageLoad": 5,
+        "smallPause": 1
+    },
+    "scrollCount": 10,
+    "scrollLength": 200,
+    "slotDragLength": 152.5,
+    "mousePosition": {
+        "facilitiesButton": {
+            "x": 180,
+            "y": 180
+        },
+        "facilitiesHeader": {
+            "x": 100,
+            "y": 125
+        },
+        "tennisCourt1Button": {
+            "x": 50,
+            "y": 650
+        },
+        "tennisCourt2Button": {
+            "x": 50,
+            "y": 750
+        },
+        "slotBookingButton": {
+            "x": 360,
+            "y": 800
+        },
+        "tomorrowToggle": {
+            "x": 400,
+            "y": 250
+        },
+        "timeSlotDrag": {
+            "x": 200,
+            "y": 430
+        },
+        "timeSlotButton": {
+            "x": 80,
+            "y": 410
+        },
+        "bookNowButton": {
+            "x": 220,
+            "y": 800
+        },
+        "confirmButton": {
+            "x": 280,
+            "y": 480
+        },
+        "bookingBackButton": {
+            "x": 25,
+            "y": 75
+        },
+        "facilitiesBackButton": {
+            "x": 22,
+            "y": 88
+        },
+        "closeWindowButton": {
+            "x": 430,
+            "y": 15
+        },
+        "confirmCloseButton": {
+            "x": 355,
+            "y": 450
+        },
+        "blueStacksCloseButton": {
+            "x": 1400,
+            "y": 40
+        }
+    }
+}
