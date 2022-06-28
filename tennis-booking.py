@@ -5,6 +5,7 @@ import json
 import time
 import datetime
 import logging
+import logging.config
 import yagmail
 import pywhatkit
 import subprocess
@@ -33,7 +34,7 @@ def read_credentials(key, file_name="credentials.json"):
     return creds[key]
 
 
-def get_apnacomplex_driver(config):
+def get_apnacomplex_driver(config, logger):
     options = Options()
     options.binary_location = config["chromeBinaryPath"]
     options.add_experimental_option("excludeSwitches", ["enable-logging"])
@@ -43,8 +44,8 @@ def get_apnacomplex_driver(config):
         )
     except SessionNotCreatedException:
         failure_msg = "Chrome driver is outdated. Please download the latest version from https://chromedriver.chromium.org/downloads"
-        logging.error(failure_msg)
-        # send_status_whatsapp(msg_text=failure_msg)
+        logger.error(failure_msg)
+        # send_status_whatsapp(msg_text=failure_msg, logger=logger)
         quit()
 
     creds = read_credentials(key="apna-complex")
@@ -99,9 +100,9 @@ def get_court_links(driver, delay, court_num):
     return court_links
 
 
-def get_existing_bookings(config):
+def get_existing_bookings(config, logger):
     # Initialize the webdriver and navigate to facilities page
-    driver = get_apnacomplex_driver(config=config)
+    driver = get_apnacomplex_driver(config=config, logger=logger)
     # Get the court booking and viewing links from the facilities table
     court_links = get_court_links(
         driver=driver, delay=config["webDriverDelay"], court_num=None
@@ -114,17 +115,18 @@ def get_existing_bookings(config):
                 driver=driver,
                 delay=config["webDriverDelay"],
                 viewing_url=viewing_links[court],
+                logger=logger
             )
     except Exception as ex:
-        logging.error(f"Booking failed while checking exising bookings.")
-        logging.error(ex)
+        logger.error(f"Booking failed while checking exising bookings.")
+        logger.error(ex)
 
     driver.close()
     driver.quit()
     return existing_bookings, court_links
 
 
-def get_active_bookings(driver, delay, viewing_url):
+def get_active_bookings(driver, delay, viewing_url, logger):
     def get_booking_count(booking_calendar, check_expired):
         booking_count = 0
         events_container = booking_calendar.find_elements_by_class_name(
@@ -161,17 +163,18 @@ def get_active_bookings(driver, delay, viewing_url):
             )
 
     except Exception as ex:
-        logging.error("Unknown error occured during active booking checks.")
-        logging.error(ex)
+        logger.error("Unknown error occured during active booking checks.")
+        logger.error(ex)
 
     return booking_count
 
 
-def get_booking_time_slot(slot_hour):
+def get_booking_time_slot(config):
+    slot_hour = config["slotHour"]
     if slot_hour is None:
         slot_hour = int(datetime.datetime.now().strftime("%H"))
         current_min = int(datetime.datetime.now().strftime("%M"))
-        if current_min > 50:
+        if current_min > config["nextHourCutoff"]:
             slot_hour += 1
 
     booking_datetime = datetime.datetime.now() + datetime.timedelta(days=1)
@@ -220,12 +223,12 @@ def send_status_email(msg_text):
     yag.send(gmail_creds["id"], msg_text, msg_text)
 
 
-def send_status_whatsapp(msg_text):
+def send_status_whatsapp(msg_text, logger):
     try:
         whatsapp_creds = read_credentials(key="whatsapp")
         msg_hour = datetime.datetime.now().hour
         msg_min = datetime.datetime.now().minute + 1
-        logging.info("Sending confirmation msg to %s" % whatsapp_creds["mobile"])
+        logger.info("Sending confirmation msg to %s" % whatsapp_creds["mobile"])
         pywhatkit.sendwhatmsg(
             phone_no=whatsapp_creds["mobile"],
             message=msg_text,
@@ -235,7 +238,7 @@ def send_status_whatsapp(msg_text):
             tab_close=True,
         )
     except:
-        logging.error("Error sending whatsapp msg to %s" % whatsapp_creds["mobile"])
+        logger.error("Error sending whatsapp msg to %s" % whatsapp_creds["mobile"])
 
 
 def load_apnacomplex_app(config, app_index):
@@ -246,15 +249,15 @@ def load_apnacomplex_app(config, app_index):
     return window_handle
 
 
-def navigate_to_booking(config, window_handle, booking_args):
+def navigate_to_booking(config, window_handle, booking_args, logger):
     if not IsWindowVisible(window_handle):
-        logging.error(f"Window handle {window_handle} not found - unable to navigate")
+        logger.error(f"Window handle {window_handle} not found - unable to navigate")
         return False
 
     SetForegroundWindow(window_handle)
     window_rectangle = GetWindowRect(window_handle)
 
-    logging.info("Starting navigation to booking page")
+    logger.info("Starting navigation to booking page")
 
     # Open facilities page
     pyautogui.moveTo(
@@ -340,9 +343,9 @@ def navigate_to_booking(config, window_handle, booking_args):
     return True
 
 
-def confirm_booking(config, window_handle):
+def confirm_booking(config, window_handle, logger):
     if not IsWindowVisible(window_handle):
-        logging.error(
+        logger.error(
             f"Window handle {window_handle} not found - unable to confirm booking"
         )
         return False
@@ -358,9 +361,9 @@ def confirm_booking(config, window_handle):
     return True
 
 
-def navigate_to_home(config, window_handle):
+def navigate_to_home(config, window_handle, logger):
     if not IsWindowVisible(window_handle):
-        logging.error(f"Window handle {window_handle} not found - unable to close")
+        logger.error(f"Window handle {window_handle} not found - unable to close")
         return False
 
     SetForegroundWindow(window_handle)
@@ -400,10 +403,10 @@ def navigate_to_home(config, window_handle):
     return True
 
 
-def closeBlueStacksWindow(config):
+def closeBlueStacksWindow(config, logger):
     window_handle = FindWindow(None, config["blueStacksWindowName"])
     if not IsWindowVisible(window_handle):
-        logging.error(f"BlueStacks window {window_handle} not found - unable to close")
+        logger.error(f"BlueStacks window {window_handle} not found - unable to close")
         return False
 
     SetForegroundWindow(window_handle)
@@ -418,7 +421,8 @@ def closeBlueStacksWindow(config):
     return True
 
 
-def minimizeAllWindows():
+def minimizeAllWindows(logger):
+    logger.info("Minimizing all windows")
     pyautogui.keyDown("winleft")
     pyautogui.press("d")
     pyautogui.keyUp("winleft")
@@ -429,47 +433,53 @@ def minimizeAllWindows():
 
 
 def main():
-    # Minimize all windows and click on desktop
-    minimizeAllWindows()
-    
     # Load config
     configFilePath = os.path.join(pathlib.Path(__file__).parent, "config.json")
     with open(configFilePath) as configJson:
         config = json.load(configJson)
 
     # Set logging config
-    logging.basicConfig(filename="tennis-booking.log", level=logging.INFO)
+    logConfigPath = os.path.join(pathlib.Path(__file__).parent, "log_config.json")
+    with open(logConfigPath) as logConfigJson:
+        logConfig = json.load(logConfigJson)
+    logging.config.dictConfig(logConfig)
+    logger = logging.getLogger("default")
 
+    # Minimize all windows and click on desktop
+    minimizeAllWindows(logger=logger)
+    
     # Get existing booking counts for each court
-    logging.info(f"Checking existing bookings.")
-    slot_hour, booking_datetime = get_booking_time_slot(slot_hour=config["slotHour"])
-    existing_bookings, court_links = get_existing_bookings(config=config)
+    logger.info(f"Checking existing bookings.")
+    slot_hour, booking_datetime = get_booking_time_slot(config=config)
+    existing_bookings, court_links = get_existing_bookings(config=config, logger=logger)
 
     # Get list of available courts
     court_num_list = select_court_num(
         existing_bookings=existing_bookings, retries=0, num_slots=config["numSlots"]
     )
     if court_num_list is None:
-        logging.error("Too many active bookings found. Can't book any more.")
+        logger.error("Too many active bookings found. Can't book any more.")
 
     # Create booking arguments for each court booking
     all_booking_args = [
         dict(courtNum=court_num, slotHour=slot_hour) for court_num in court_num_list
     ]
+    
+    logger.info(f"Booking {len(court_num_list)} slots for {slot_hour}:00 hours.")
 
     # Open app windows for each booking and navigate to confirm page
-    logging.info("Initializing ApnaComplex app windows for booking.")
+    logger.info("Initializing ApnaComplex app windows for booking.")
     all_window_handles = list()
     for idx, booking_args in enumerate(all_booking_args):
         window_handle = load_apnacomplex_app(config=config, app_index=idx)
         isSuccess = navigate_to_booking(
-            config=config, window_handle=window_handle, booking_args=booking_args
+            config=config, window_handle=window_handle, booking_args=booking_args, logger=logger
         )
         if isSuccess:
             all_window_handles.append(window_handle)
 
     # Sleep till booking time arrives
-    logging.info("Sleeping till booking time arrives.")
+    logger.info("Sleeping till booking time arrives.")
     time_to_booking = booking_datetime - datetime.datetime.now()
     sleep_time = 5
     while time_to_booking >= datetime.timedelta(hours=24):
@@ -479,17 +489,17 @@ def main():
             sleep_time = 0.001
 
     # Click confirm once booking time arrives
-    logging.info("Confirming bookings.")
+    logger.info("Confirming bookings.")
     for window_handle in all_window_handles:
-        confirm_booking(config=config, window_handle=window_handle)
+        confirm_booking(config=config, window_handle=window_handle, logger=logger)
     time.sleep(config["sleepDuration"]["pageLoad"])
 
     # Navigate back to the home page and close the windows
-    logging.info("Closing booking app windows.")
+    logger.info("Closing booking app windows.")
     for window_handle in all_window_handles:
-        navigate_to_home(config=config, window_handle=window_handle)
+        navigate_to_home(config=config, window_handle=window_handle, logger=logger)
 
-    closeBlueStacksWindow(config=config)
+    closeBlueStacksWindow(config=config, logger=logger)
     return
 
 

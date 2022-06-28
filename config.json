@@ -16,6 +16,7 @@
     "numSlots": 2,
     "slotHour": null,
     "initialSlotHour": 5,
+    "nextHourCutoff": 45,
     "sleepDuration": {
         "appLoad": 120,
         "pageLoad": 5,
